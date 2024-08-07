@@ -1,0 +1,225 @@
+---
+title: "Google Data Analytics Case Study 1"
+author: "Joel Hayashi"
+date: "2023-08-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Instal and load required packages
+We will install 'tidyverse', 'ggplot2','janitor'
+
+```{r install and load pkg}
+install.packages('tidyverse')
+install.packages('janitor')
+install.packages('ggplot2')
+install.packages('skimr')
+library(tidyverse)
+library(janitor)
+library(ggplot2)
+library(skimr)
+```
+
+## Import data
+Import all csv files 
+
+```{r import data}
+# set working directory to csv file location
+setwd("~/Documents/Career/DataScience/coursera_google_dataanalytics/capstone/case_study_1/data_2017q3-2018q2")
+q3_2017 <- read_csv("Divvy_Trips_2017_Q3.csv", show_col_types = FALSE)
+q4_2017 <- read_csv("Divvy_Trips_2017_Q4.csv", show_col_types = FALSE)
+q1_2018 <- read_csv("Divvy_Trips_2018_Q1.csv", show_col_types = FALSE)
+q2_2018 <- read_csv("Divvy_Trips_2018_Q2.csv", show_col_types = FALSE)
+```
+
+## Inspect columns and data types
+Prior to joining all files into a single file, need to verify column header names and data types, making sure they match.
+
+```{r checking cols and data types}
+glimpse(q3_2017)
+glimpse(q4_2017)
+glimpse(q1_2018)
+glimpse(q2_2018)
+```
+
+## Clean data: clean header names and merge data
+Some variations in header names and data types have been identified. "Divvy_Trips_2018_Q1.csv" header names are particularly different from the rest. Header names for all other files are the same. We will rename all header names and data types based on "Divvy_Trips_2018_Q2.csv". Finally, we will merge all csv trip files together, adding them as rows.
+
+```{r clean data for header names and merge}
+# Rename headers
+q1_2018 <- q1_2018 %>%
+  rename(trip_id = '01 - Rental Details Rental ID',
+  start_time = '01 - Rental Details Local Start Time',
+  end_time = '01 - Rental Details Local End Time',
+  bikeid = '01 - Rental Details Bike ID',
+  tripduration = '01 - Rental Details Duration In Seconds Uncapped',
+  from_station_id = '03 - Rental Start Station ID',
+  from_station_name = '03 - Rental Start Station Name',
+  to_station_id = '02 - Rental End Station ID',
+  to_station_name = '02 - Rental End Station Name',
+  usertype = 'User Type',
+  gender = 'Member Gender',
+  birthyear = '05 - Member Details Member Birthday Year')
+
+#Convert char to dttm data type with lubridate
+q3_2017 <- mutate(q3_2017,
+                  start_time = mdy_hms(start_time),
+                  end_time = mdy_hms(end_time))
+q4_2017 <- mutate(q4_2017,
+                  start_time = mdy_hm(start_time),
+                  end_time = mdy_hm(end_time))
+
+#Merge into single data frames
+all_trips <- bind_rows(q3_2017, q4_2017, q1_2018, q2_2018)
+```
+
+## Check new table
+Make sure column numbers are consistent with those of the individual csv files and check the number of rows present, column data types, and missing entries.
+
+```{r check merged table}
+glimpse(all_trips)
+skim_without_charts(all_trips)
+```
+
+## Clean data: modify column values
+Since annual members and casual riders were given values, "Subscribers" and "Customers", we will reassign their values to "members" and "casual", respectively. 
+
+```{r clean merged data}
+#Change "Subscriber" to "member", "Customer" to "casual"
+all_trips <- all_trips %>%
+  mutate(usertype = str_replace(usertype,"Subscriber","member"))
+all_trips <- all_trips %>%
+  mutate(usertype = str_replace(usertype,"Customer","casual"))
+
+#Check frequency of values in usertype column
+table(all_trips$usertype)
+
+#Verify the change in columns
+colnames(all_trips)
+nrow(all_trips)
+```
+
+## Clean data: modify column values - continued
+We have converted the usertype values to the currently adopted nomenclature; however, 3 entries have returned a value that is neither a 'member' nor 'casual'. Since we do not have the means to obtain clarification on how to categorize 'Dependent' and the effect of the number of records on the outcome of analysis is trivial, we will drop these records from the table. In addition, we have confirmed several missing entries in the gender and birthyear column. We would like to look for correlations that are more encompassing and in no way discriminate against gender and age, we will drop these from columns from our all_trips data frame.
+
+```{r remove records with incompatible 'usertype' value}
+#Dropping gender and birthyear columns, drop records with 'Dependent' as the usertype entry
+all_trips_v2 <- all_trips %>%
+  select(-c('gender','birthyear')) %>%
+  subset(usertype == 'casual' | usertype == 'member')
+
+#Confirm that the data cleaning outcome is consistent with frequency table and number of rows
+table(all_trips_v2$usertype)
+nrow(all_trips_v2)
+```
+
+## Prepare for data analysis
+We will add columns for the date, year, month, day, and day of the week to create more ways to aggregate data in our analysis. In addition, we will convert the tripduration column values to minutes instead of seconds.
+
+```{r add cols for more aggregation options}
+all_trips_v2 <- all_trips_v2 %>%
+  mutate(date = date(start_time))
+all_trips_v2 <- all_trips_v2 %>%
+  mutate(year = year(start_time))
+all_trips_v2 <- all_trips_v2 %>%
+  mutate(month = month(start_time))
+all_trips_v2 <- all_trips_v2 %>%
+  mutate(day = day(start_time))
+all_trips_v2 <- all_trips_v2 %>%
+  mutate(day_of_week = wday(start_time, label=TRUE, abbr=FALSE))
+
+all_trips_v2 <- all_trips_v2 %>%
+  mutate(tripduration = round(tripduration/60, digits = 2))
+
+```
+
+## Conduct descriptive analysis
+We will take a look at some basic statistics to get a overview of our data, identifying some patterns as we go. 
+
+```{r descriptive analysis}
+#Statistical overview of tripduration
+summary(all_trips_v2$tripduration)
+
+#Statistical overview trellis by usertype
+trip_stats_usertype <- all_trips_v2 %>%
+  group_by(usertype) %>%
+  summarise(number_of_rides = n(),
+            min_tripduration = min(tripduration),
+            max_tripduration = max(tripduration),
+            average_tripduration = mean(tripduration),
+            median_tripduration = median(tripduration),
+            stddev_tripduration = sd(tripduration))
+
+#Statistical overview trellis by usertype and day_of_week
+all_trips_v2 %>%
+  group_by(usertype, day_of_week) %>%
+  summarise(average_tripduration = mean(tripduration),
+            median_tripduration = median(tripduration),
+            number_of_rides = n()) %>%
+  arrange(usertype, day_of_week)
+
+#Frequency table of tripduration 
+table(cut(all_trips_v2$tripduration, breaks = 20))
+  # num of rows of lowest bracket is 99.99%+ of whole data set
+```
+
+## Basic visualization
+We will visualize median tripduration and number of rides for each day of the week, color-coded by usertype to find any trends in these metrics. Additionally, the previous frequency table has revealed that the majority of trips have a tripduration of less than 24 hrs. To get a better understanding of the distribution of tripduration, the upper-bounds of the tripduration must be appropriately defined for the binning to work effectively. To address this, we will create the new table, all_trips_v3, to filter for tripdurations within 24 hrs. Should closer inspection of frequency reveal further need for filters, we will create new tables accordingly and create a histogram that accurately depicts tripduration distributions for relevant tripduration time periods.
+
+```{r basic visualizations}
+#Bar chart: median tripduration for each day_of_week split by usertype
+all_trips_v2 %>%
+  group_by(usertype, day_of_week) %>%
+  summarise(median_tripduration = median(tripduration)) %>%
+  ggplot(aes(x = day_of_week, y = median_tripduration, fill = usertype)) +
+  geom_col(position = "dodge")
+
+#Bar chart: number_of_rides for each day_of_week split by usertype
+all_trips_v2 %>%
+  group_by(usertype, day_of_week) %>%
+  summarise(number_of_rides = n()) %>%
+  ggplot(aes(x = day_of_week, y = number_of_rides, fill = usertype)) +
+  geom_col(position = "dodge")
+
+#Create new table with tripdurations within 24 hrs
+all_trips_v3 <- filter(all_trips_v2, all_trips_v2$tripduration <= 24 * 60)
+table(cut(all_trips_v3$tripduration, breaks = 20))
+  # Frequency table shows 3.5M+ trips within 80 mins, 98.09% of whole data set
+
+#Create new table with tripduration within 90 mins
+all_trips_v4 <- filter(all_trips_v2, all_trips_v2$tripduration <= 90)
+table(cut(all_trips_v4$tripduration, breaks = 20))
+
+#Histogram: Show distribution of number_of_rides binned by tripduration
+all_trips_v4 %>%
+  ggplot(aes(x = tripduration, fill = usertype)) +
+  geom_histogram()
+
+#Histogram: Show distribution of number_of_rides binned by tripduration for each usertype
+all_trips_v4 %>%
+  filter(usertype == "casual") %>%
+  ggplot(aes(x = tripduration)) +
+  geom_histogram()
+
+all_trips_v4 %>%
+  filter(usertype == "member") %>%
+  ggplot(aes(x = tripduration)) +
+  geom_histogram()
+```
+
+## Export file for visualization in Tableau
+We will newly create another file containing only the essential columns that could come in handy when visualizing and exploring any interesting trends. Since filters could easily be added on Tableau, we will base the export file off of the all_trips_v2 table.
+
+```{r export file}
+export_file <- all_trips_v2 %>%
+  select(-c('bikeid', 'from_station_id', 'from_station_name', 'to_station_id', 'to_station_name'))
+
+write.csv(export_file, file = '~/Documents/Career/DataScience/coursera_google_dataanalytics/capstone/case_study_1/cleaned_2017q3-2018q2_data.csv')
+
+```
+
+
+
